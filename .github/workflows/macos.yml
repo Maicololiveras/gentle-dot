@@ -54,8 +54,7 @@ jobs:
             x64) target=darwin-x64 ;;
             *) echo "Unsupported macOS Node architecture" >&2; exit 1 ;;
           esac
-          # The stager validates host/target support before downloads. Currently arm64 only;
-          # an x64 runner must fail explicitly until the existing stager supports that target.
+          # The stager validates native host/target support before downloads.
           # It builds the daemon and UI, verifies downloads, and records runtime versions.
           node scripts/package/stage-runtime.mjs --target "$target" --out "$RUNNER_TEMP/gentle-dot-runtime"
 

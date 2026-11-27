@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Builds the macOS installer (S29.2): stages the runtime, signs its nested code,
 // builds the release app and DMG with Tauri, and verifies the result:
-// `node scripts/package/package-mac.mjs [--sign <identity>] [--skip-stage] [--check]`.
+// `node scripts/package/package-mac.mjs [--target <darwin-arm64|darwin-x64>] [--sign <identity>] [--skip-stage] [--check]`.
 // `--check-dmg <dmg>` only checks a built DMG: it mounts it read-only, copies the
 // app to a temporary folder, and starts the copy's daemon on a clean HOME.
 import { spawnSync } from "node:child_process";
@@ -38,7 +38,6 @@ import {
 } from "./lib.mjs";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
-const TARGET = "darwin-arm64";
 const TAURI = join(REPO, "apps", "desktop", "src-tauri");
 const HERE = join(REPO, "scripts", "package");
 
@@ -98,7 +97,7 @@ const identityName = (identity) => (identity === AD_HOC ? "ad hoc" : `"${identit
  * them into the app and signs the app around them. Hardened runtime stays off: Node
  * needs JIT, and the N-API addons are signed by others (library validation).
  */
-function signRuntime(runtime, identity) {
+async function signRuntime(runtime, identity, target) {
 	const binaries = machOFiles(runtime);
 	const kept = binaries.filter(keepsOwnSignature);
 	const signed = insideOut(binaries.filter((relative) => !keepsOwnSignature(relative)));
@@ -107,11 +106,31 @@ function signRuntime(runtime, identity) {
 		run("codesign", ["--force", "--sign", identity, "--timestamp=none", join(runtime, relative)]);
 		say(`  signed ${relative}`);
 	}
+	const detached = new Map();
 	for (const relative of kept) {
-		run("codesign", ["--verify", "--strict", join(runtime, relative)]);
+		const path = join(runtime, relative);
+		// The pinned Intel 5.0.0 binary is unsigned. Sign separately for ad-hoc QA
+		// so the engine can still authenticate the original upstream bytes.
+		if (
+			identity === AD_HOC && target === "darwin-x64" &&
+			relative === "daemon/node_modules/gentle-pi/.gentle-ai/v5.0.0/gentle-ai"
+		) {
+			const digest = await sha256File(path);
+			// binarySha256 from gentle-pi@5.0.0's darwin/amd64 release recipe.
+			if (digest !== "63c9833b8d6986ecc8aa6427f3d6e4375662bcdedca7d3b281502f941f0928fb")
+				throw new Error("Gentle AI Intel binary differs from the upstream release pin");
+			const name = "gentle-ai-intel-qa.sig";
+			const signature = join(runtime, name);
+			run("codesign", ["--sign", identity, "--timestamp=none", "--detached", signature, path]);
+			run("codesign", ["--verify", "--strict", "--detached", signature, path]);
+			detached.set(relative, name);
+			say(`  unsigned upstream Intel binary preserved; detached ad-hoc QA signature verified: ${relative}`);
+			continue;
+		}
+		run("codesign", ["--verify", "--strict", path]);
 		say(`  kept its own signature (pinned digest): ${relative}`);
 	}
-	return { signed, kept };
+	return { signed, kept, detached };
 }
 
 /** Checks the built app: its signature, its nested code, and that the runtime kept every file and mode. */
@@ -132,6 +151,9 @@ async function verifyApp(app, runtime, nested) {
 			sha256File(join(bundled, relative)),
 		]);
 		if (staged !== copied) throw new Error(`${relative} changed on its way into the app.`);
+		const signature = nested.detached.get(relative);
+		if (signature)
+			run("codesign", ["--verify", "--strict", "--detached", join(bundled, signature), join(bundled, relative)]);
 		say(`  unchanged bytes (sha256 ${copied.slice(0, 12)}…): ${relative}`);
 	}
 }
@@ -177,31 +199,39 @@ function checkDmg(dmg) {
 
 async function main() {
 	const options = parseMacArgs(process.argv.slice(2));
-	assertHostTarget(TARGET);
+	const target = options.target ?? "darwin-arm64";
+	assertHostTarget(target);
 	if (options.checkDmg) {
 		checkDmg(resolve(process.env.INIT_CWD ?? process.cwd(), options.checkDmg));
 		return;
 	}
 
 	// The Tauri CLI asks rustc for its version itself; a cargo wrapper that finds rustc on its own is not enough.
-	if (spawnSync("rustc", ["--version"]).status !== 0)
+	const rust = spawnSync("rustc", ["-vV"], { encoding: "utf8" });
+	if (rust.status !== 0)
 		throw new Error(
 			"rustc is not on PATH; the Tauri CLI needs it (install Rust with rustup, or add it to PATH).",
 		);
-
-	const runtime = join(REPO, "build", "runtime", TARGET);
+	const rustTarget = target === "darwin-x64" ? "x86_64-apple-darwin" : "aarch64-apple-darwin";
+	if (!rust.stdout.split(/\r?\n/).includes(`host: ${rustTarget}`))
+		throw new Error(`Use a native ${rustTarget} Rust toolchain for ${target}.`);
+	// Keep the existing ARM output path; Intel selects its target explicitly.
+	const targetArgs = target === "darwin-x64" ? ["--target", rustTarget] : [];
+	const runtime = join(REPO, "build", "runtime", target);
 	if (options.skipStage) {
 		if (!existsSync(join(runtime, "MANIFEST.json")))
 			throw new Error(`--skip-stage needs a staged runtime in ${runtime}; run without it once.`);
 		say(`Using the staged runtime in ${runtime}`);
-	} else run(process.execPath, [join(HERE, "stage-runtime.mjs"), "--target", TARGET, "--out", runtime]);
+	} else run(process.execPath, [join(HERE, "stage-runtime.mjs"), "--target", target, "--out", runtime]);
 
-	const nested = signRuntime(runtime, options.identity);
+	const nested = await signRuntime(runtime, options.identity, target);
 
-	// Tauri copies the signed runtime into the app, signs the app, and builds the DMG from it.
-	// Unless asked, the DMG's Finder window is not scripted (CI): that needs Finder automation.
+	// Tauri copies the signed runtime into the app and signs the app. For ad-hoc
+	// Actions QA, package the verified app without invoking Finder automation.
 	const config = tauriReleaseConfig({ runtime, identity: options.identity });
-	say(`tauri build --bundles app,dmg (release, signing ${identityName(options.identity)})`);
+	const headlessQa = process.env.GITHUB_ACTIONS === "true" && options.identity === AD_HOC && !options.finderLayout;
+	const bundles = headlessQa ? "app" : "app,dmg";
+	say(`tauri build --bundles ${bundles} (release, signing ${identityName(options.identity)})`);
 	const env = { ...process.env, APPLE_SIGNING_IDENTITY: options.identity };
 	if (options.finderLayout) delete env.CI;
 	else env.CI = "true";
@@ -213,8 +243,9 @@ async function main() {
 			"exec",
 			"tauri",
 			"build",
+			...targetArgs,
 			"--bundles",
-			"app,dmg",
+			bundles,
 			"--config",
 			JSON.stringify(config),
 		],
@@ -222,11 +253,21 @@ async function main() {
 	);
 
 	const { productName, version } = JSON.parse(readFileSync(join(TAURI, "tauri.conf.json"), "utf8"));
-	const bundle = join(TAURI, "target", "release", "bundle");
-	const app = join(bundle, "macos", `${productName}.app`);
-	const dmg = join(bundle, "dmg", dmgFileName(productName, version, "arm64"));
-	if (!existsSync(dmg)) throw new Error(`Tauri left no ${dmg}.`);
+	const bundle = join(TAURI, "target", ...(targetArgs.length ? [rustTarget] : []), "release", "bundle");
+	const source = join(bundle, "macos");
+	const appName = `${productName}.app`;
+	const app = join(source, appName);
+	const dmg = join(bundle, "dmg", dmgFileName(productName, version, target.slice("darwin-".length)));
+	if (!headlessQa && !existsSync(dmg)) throw new Error(`Tauri left no ${dmg}.`);
 	await verifyApp(app, runtime, nested);
+	if (headlessQa) {
+		const entries = readdirSync(source);
+		if (entries.length !== 1 || entries[0] !== appName)
+			throw new Error("Expected only the verified app in the macOS bundle directory");
+		mkdirSync(join(bundle, "dmg"), { recursive: true });
+		run("hdiutil", ["create", "-ov", "-format", "UDZO", "-volname", productName, "-srcfolder", source, dmg]);
+		if (!existsSync(dmg)) throw new Error(`Expected disk image at ${dmg}.`);
+	}
 	report("hdiutil", ["verify", dmg]);
 	const size = statSync(dmg).size;
 	say(`App: ${app}`);

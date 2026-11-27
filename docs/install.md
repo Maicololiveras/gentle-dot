@@ -78,7 +78,13 @@ pnpm package:mac --check         # also mounts the DMG and smoke-tests the copie
 
 To keep permissions across updates, sign every release with the same identity. `scripts/package/create-signing-identity.sh` creates a self-signed one named "Gentle Dot Local Signing" in the login keychain (no trust setting or password needed); its designated requirement pins the certificate (`certificate leaf = H"…"`), so it stays the same across builds. Keep that keychain entry: a new certificate means everyone grants the permissions once more. The first signed build asks once per signed file to use the key; choose **Always Allow** on the first prompt.
 
-The command stages the runtime (`build/runtime/darwin-arm64`), signs the runtime's binaries, builds the release app, and writes the DMG to `apps/desktop/src-tauri/target/release/bundle/dmg/`. `--skip-stage` reuses a runtime staged earlier; `--check-dmg <dmg>` checks an existing DMG without building.
+The command defaults to `--target darwin-arm64`. It stages the runtime (`build/runtime/darwin-arm64`), signs the runtime's binaries, builds the release app, and writes the DMG to `apps/desktop/src-tauri/target/release/bundle/dmg/`. `--skip-stage` reuses a runtime staged earlier; `--check-dmg <dmg>` checks an existing DMG without building.
+
+### Native package QA artifacts
+
+The **Native package QA** workflow builds ad-hoc, non-notarized DMGs on Apple Silicon and Intel runners and checks the daemon from a copy of each mounted image. The Intel QA command is `node scripts/package/package-mac.mjs --target darwin-x64 --sign - --check`; it requires native x64 Node and Rust, and its DMG goes under `apps/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/`. Pass the same target to `--check-dmg` on Intel. On Actions, the ad-hoc QA path creates the disk image from the verified app without Finder automation.
+
+The workflow also checks Debian and Ubuntu packages on amd64 and arm64 and the Arch package on amd64. It uploads the results and SHA-256 checksums as Actions artifacts only. These are not published releases or evidence of interactive desktop acceptance.
 
 ## Windows
 
