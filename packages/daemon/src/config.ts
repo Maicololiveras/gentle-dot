@@ -31,6 +31,10 @@ const DEFAULT_UI_DIR = fileURLToPath(new URL("../../ui/dist/app", import.meta.ur
  */
 export type MemoryMode = "shared" | "private";
 
+function runtimeGentleShell(runtime: string): string {
+	return join(runtimeModules(runtime), "gentle-pi", "bin", "gentle-shell.mjs");
+}
+
 /**
  * Path of the Gentle Shell launcher bundled with the daemon (the `gentle-pi` dependency),
  * from the runtime's `node_modules` in an installed app.
@@ -38,7 +42,7 @@ export type MemoryMode = "shared" | "private";
 export function bundledGentleShell(env: NodeJS.ProcessEnv = process.env): string {
 	const runtime = runtimeDir(env);
 	if (runtime) {
-		const bin = join(runtimeModules(runtime), "gentle-pi", "bin", "gentle-shell.mjs");
+		const bin = runtimeGentleShell(runtime);
 		if (existsSync(bin)) return bin;
 		throw new Error(`The bundled assistant engine is missing from ${runtimeModules(runtime)}.`);
 	}
@@ -51,9 +55,8 @@ export function bundledGentleShell(env: NodeJS.ProcessEnv = process.env): string
 }
 
 /**
- * Disable launch-time provisioning only for the installed Windows default engine.
- * GENTLE_DOT_RUNTIME is supplied by the desktop runtime launcher; matching the
- * executable and bundled script also leaves programmatic custom agents alone.
+ * Keep Dot's bundled RPC engine headless without changing explicit custom agents.
+ * Only installed Windows defaults retain both launch-time provisioning gates.
  */
 export function agentSpawnEnv(
 	command: string,
@@ -63,22 +66,37 @@ export function agentSpawnEnv(
 ): NodeJS.ProcessEnv {
 	const runtime = runtimeDir(env);
 	if (
-		platform !== "win32" ||
-		!runtime ||
 		command !== process.execPath ||
 		env.GENTLE_DOT_AGENT_BIN ||
 		env.GENTLE_DOT_AGENT_SCRIPT ||
-		env.GENTLE_DOT_AGENT_ARGS ||
-		args[0] !== join(runtimeModules(runtime), "gentle-pi", "bin", "gentle-shell.mjs")
+		env.GENTLE_DOT_AGENT_ARGS
 	)
 		return env;
-	return {
-		...env,
-		// gentle-shell's first-run companion provisioning gate.
-		GENTLE_SHELL_NO_AUTO_SETUP: "1",
-		// Its missing package-local gentle-ai self-heal and installer gate.
-		GENTLE_PI_SKIP_GENTLE_AI_INSTALL: "1",
-	};
+
+	const windowsRuntime = platform === "win32" && runtime !== undefined;
+	if (!windowsRuntime && env.GENTLE_SHELL_INTERACTIVE_HOST === undefined) return env;
+
+	let bundled: string;
+	if (runtime) {
+		bundled = runtimeGentleShell(runtime);
+	} else {
+		try {
+			bundled = bundledGentleShell(env);
+		} catch {
+			// A programmatic custom agent can run without a bundled engine installed.
+			return env;
+		}
+	}
+	if (args[0] !== bundled) return env;
+
+	const child = { ...env };
+	delete child.GENTLE_SHELL_INTERACTIVE_HOST;
+	if (windowsRuntime) {
+		// The first-run provisioning and package-local Gentle AI install gates are independent.
+		child.GENTLE_SHELL_NO_AUTO_SETUP = "1";
+		child.GENTLE_PI_SKIP_GENTLE_AI_INSTALL = "1";
+	}
+	return child;
 }
 
 /** The web UI: the runtime's `ui/` in an installed app, the UI package's build otherwise. */

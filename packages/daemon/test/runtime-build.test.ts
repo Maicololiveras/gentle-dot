@@ -135,11 +135,11 @@ describe.skipIf(skipBuild)("build:runtime", () => {
 		const manifest = JSON.parse(readFileSync(join(out, "daemon", "package.json"), "utf8"));
 		expect(manifest).toMatchObject({ private: true, type: "module" });
 		expect(manifest.dependencies).toEqual({
-			"@earendil-works/pi-ai": "1.5.0",
-			"@earendil-works/pi-coding-agent": "1.5.0",
-			"@earendil-works/pi-mcp": "1.5.0",
-			"@earendil-works/pi-tui": "1.5.0",
-			"gentle-pi": "4.7.0",
+			"@earendil-works/pi-ai": "1.6.0",
+			"@earendil-works/pi-coding-agent": "1.6.0",
+			"@earendil-works/pi-mcp": "1.6.0",
+			"@earendil-works/pi-tui": "1.6.0",
+			"gentle-pi": "5.0.0",
 			jiti: "2.7.0",
 			ws: "8.22.0",
 		});
@@ -153,10 +153,10 @@ describe.skipIf(skipBuild)("build:runtime", () => {
 	it("pins the engine's own packages to the lockfile's versions", () => {
 		const manifest = JSON.parse(readFileSync(join(out, "daemon", "package.json"), "utf8"));
 		expect(manifest.overrides).toEqual({
-			"@earendil-works/pi-agent-core": "1.5.0",
-			"@earendil-works/pi-codemode": "1.5.0",
-			"@earendil-works/pi-schema": "1.5.0",
-			"@earendil-works/pi-telemetry": "1.5.0",
+			"@earendil-works/pi-agent-core": "1.6.0",
+			"@earendil-works/pi-codemode": "1.6.0",
+			"@earendil-works/pi-schema": "1.6.0",
+			"@earendil-works/pi-telemetry": "1.6.0",
 		});
 	});
 

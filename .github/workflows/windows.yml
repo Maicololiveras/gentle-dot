@@ -92,7 +92,7 @@ jobs:
     runs-on: windows-latest
     env:
       # Match pnpm-workspace.yaml and the macOS job's exact-version exception.
-      PNPM_CONFIG_MINIMUM_RELEASE_AGE_EXCLUDE: '["gentle-pi@4.7.0"]'
+      PNPM_CONFIG_MINIMUM_RELEASE_AGE_EXCLUDE: '["gentle-pi@5.0.0"]'
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
