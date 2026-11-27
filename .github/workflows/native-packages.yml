@@ -1,7 +1,7 @@
 name: Native package QA
 on:
   push:
-    branches: [ci/qa275-04-artifacts, qa/native-preview]
+    branches: [ci/qa275-04-preview-artifacts, qa/native-preview]
   workflow_dispatch:
 permissions:
   contents: read

@@ -53,7 +53,7 @@ test("QA workflow builds and checks the four POSIX profiles before uploading art
 	const workflow = new URL(".github/workflows/native-packages.yml", repo);
 	assert.ok(existsSync(workflow), "missing Native package QA workflow");
 	const source = readFileSync(workflow, "utf8");
-	assert.match(source, /branches: \[ci\/qa275-04-artifacts, qa\/native-preview\]/);
+	assert.match(source, /branches: \[ci\/qa275-04-preview-artifacts, qa\/native-preview\]/);
 	assert.match(source, /permissions:\s+contents: read/);
 	assert.match(source, /arch: amd64\s+runner: ubuntu-24\.04\s+distributions: debian,ubuntu,arch/);
 	assert.match(source, /arch: arm64\s+runner: ubuntu-24\.04-arm\s+distributions: debian,ubuntu/);
